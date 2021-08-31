@@ -13,13 +13,13 @@ import (
 
 var (
 	cli       *clientv3.Client
-	agentName = "test1"
+	agentName = "localhost"
 	zoneName  = "gz"
 	lineName  = "xx"
 )
 
 func main() {
-	CliInit()
+	go CliInit()
 	defer cli.Close()
 
 	r := gin.Default()
@@ -42,7 +42,7 @@ func CliInit() {
 		log.Fatal(err)
 	}
 
-	key := "/line/dns/" + zoneName + "/" + lineName + "/" + agentName
+	key := "/line/dns/" + zoneName + "/" + lineName + "/" + agentName + ":8445"
 
 	_, err = cli.Put(context.TODO(), key, "online", clientv3.WithLease(resp.ID))
 	if err != nil {
@@ -50,17 +50,20 @@ func CliInit() {
 	}
 
 	// to renew the lease only once
-	ka, kaerr := cli.KeepAliveOnce(context.TODO(), resp.ID)
+	_, kaerr := cli.KeepAlive(context.TODO(), resp.ID)
 	if kaerr != nil {
 		log.Fatal(kaerr)
 	}
+
+	log.Println("etcd keep alive Start:", key)
+
 }
 
 func DnsQuery(c *gin.Context) {
 	dnsType := StrToUint16(c.Param("type"))
 	dnsClass := StrToUint16(c.Param("class"))
 	domain := c.Param("domain")
-	dnsServerStr := c.Param("dns")
+	dnsServer := c.Param("dns")
 
 	m1 := new(dns.Msg)
 	m1.Id = dns.Id()
