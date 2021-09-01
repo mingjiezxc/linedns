@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
+	"github.com/domainr/dnsr"
 	"github.com/gin-gonic/gin"
 	"github.com/miekg/dns"
 	"gopkg.in/yaml.v2"
@@ -94,6 +96,16 @@ func DnsQuery(c *gin.Context) {
 	domain := c.Param("domain")
 	dnsServer := c.Param("dns")
 
+	if dnsServer == "0.0.0.0" {
+		var dataStr string
+		r := dnsr.New(10000)
+		for _, rr := range r.Resolve(domain, dns.Type(dnsType).String()) {
+			dataStr = dataStr + fmt.Sprintln(rr.String())
+		}
+		c.String(200, dataStr)
+		return
+	}
+
 	m1 := new(dns.Msg)
 	m1.Id = dns.Id()
 	m1.RecursionDesired = true
@@ -106,7 +118,6 @@ func DnsQuery(c *gin.Context) {
 		c.String(201, err)
 	} else {
 		c.String(200, in.String())
-
 	}
 }
 
