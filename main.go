@@ -22,13 +22,13 @@ var (
 )
 
 type YamlConfig struct {
-	ListeningAddr string
-	ListeningPort string
-	ZoneName      string
-	LineName      string
-	EtcdServers   []string
-	EtcdUser      string
-	EtcdPassword  string
+	ListeningAddr string   `yaml:"ListeningAddr"`
+	ListeningPort string   `yaml:"ListeningPort"`
+	ZoneName      string   `yaml:"ZoneName"`
+	LineName      string   `yaml:"LineName"`
+	EtcdServers   []string `yaml:"EtcdServers"`
+	EtcdUser      string   `yaml:"EtcdUser"`
+	EtcdPassword  string   `yaml:"EtcdPassword"`
 }
 
 func main() {
@@ -86,7 +86,7 @@ func CliRegedit() {
 
 		break
 	}
-	log.Println("Etcd Regedit Config done:", key)
+	log.Println("Etcd Regedit Config done")
 
 }
 
@@ -115,7 +115,7 @@ func DnsQuery(c *gin.Context) {
 	dc := new(dns.Client)
 	in, _, err := dc.Exchange(m1, dnsServer+":53")
 	if err != nil {
-		c.String(201, err)
+		c.String(201, err.Error())
 	} else {
 		c.String(200, in.String())
 	}
