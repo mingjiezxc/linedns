@@ -1,0 +1,18 @@
+
+
+# 提供给 smartdns 访问的地址
+ListeningAddr: 127.0.0.1
+
+# if Listening port < 1024 ，pls use root run
+ListeningPort: 8053
+
+# etcd regedit 路径
+ZoneName: gz
+LineName: xx
+
+# etcd server
+EtcdServers:
+  - 127.0.0.1:2379
+EtcdUser: 
+EtcdPassword:
+

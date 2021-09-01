@@ -2,60 +2,89 @@ package main
 
 import (
 	"context"
+	"io/ioutil"
 	"log"
+	"os"
 	"strconv"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/gin-gonic/gin"
 	"github.com/miekg/dns"
+	"gopkg.in/yaml.v2"
 )
 
 var (
 	cli       *clientv3.Client
-	agentName = "localhost"
-	zoneName  = "gz"
-	lineName  = "xx"
+	appConfig YamlConfig
 )
 
+type YamlConfig struct {
+	ListeningAddr string
+	ListeningPort string
+	ZoneName      string
+	LineName      string
+	EtcdServers   []string
+	EtcdUser      string
+	EtcdPassword  string
+}
+
 func main() {
-	go CliInit()
+	go CliRegedit()
 	defer cli.Close()
 
 	r := gin.Default()
 	r.GET("/query/:domain/:type/:class/:dns", DnsQuery)
 
-	r.Run("0.0.0.0:8445") // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
+	r.Run("0.0.0.0:" + appConfig.ListeningPort) // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
 }
 
-func CliInit() {
-	cli, err := clientv3.New(clientv3.Config{
-		Endpoints:   []string{"localhost:2379"},
-		DialTimeout: 5 * time.Second,
+func init() {
+	// read config file
+	configfile, err := ioutil.ReadFile("./config.yaml")
+	if ErrCheck(err) {
+		os.Exit(1)
+	}
+
+	// yaml marshal config
+	err = yaml.Unmarshal(configfile, &appConfig)
+	if ErrCheck(err) {
+		os.Exit(2)
+	}
+
+	cli, err = clientv3.New(clientv3.Config{
+		Endpoints:   appConfig.EtcdServers,
+		Username:    appConfig.EtcdUser,
+		Password:    appConfig.EtcdPassword,
+		DialTimeout: 10 * time.Second,
 	})
-	if err != nil {
-		log.Fatal(err)
+	if ErrCheck(err) {
+		os.Exit(3)
 	}
+}
 
-	resp, err := cli.Grant(context.TODO(), 5)
-	if err != nil {
-		log.Fatal(err)
+func CliRegedit() {
+	for {
+		resp, err := cli.Grant(context.TODO(), 5)
+		if ErrCheck(err) {
+			continue
+		}
+
+		key := "/line/dns/" + appConfig.ZoneName + "/" + appConfig.LineName + "/" + appConfig.ListeningAddr + appConfig.ListeningPort
+
+		_, err = cli.Put(context.TODO(), key, "online", clientv3.WithLease(resp.ID))
+		if ErrCheck(err) {
+			continue
+		}
+		// to renew the lease only once
+		_, err = cli.KeepAlive(context.TODO(), resp.ID)
+		if ErrCheck(err) {
+			continue
+		}
+
+		break
 	}
-
-	key := "/line/dns/" + zoneName + "/" + lineName + "/" + agentName + ":8445"
-
-	_, err = cli.Put(context.TODO(), key, "online", clientv3.WithLease(resp.ID))
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	// to renew the lease only once
-	_, kaerr := cli.KeepAlive(context.TODO(), resp.ID)
-	if kaerr != nil {
-		log.Fatal(kaerr)
-	}
-
-	log.Println("etcd keep alive Start:", key)
+	log.Println("Etcd Regedit Config done:", key)
 
 }
 
@@ -80,4 +109,12 @@ func DnsQuery(c *gin.Context) {
 func StrToUint16(s string) uint16 {
 	value, _ := strconv.ParseUint(s, 16, 16)
 	return uint16(value) // done!
+}
+
+func ErrCheck(err error) bool {
+	if err != nil {
+		log.Println(err.Error())
+		return true
+	}
+	return false
 }
