@@ -101,9 +101,13 @@ func DnsQuery(c *gin.Context) {
 	m1.Question[0] = dns.Question{domain, dnsType, dnsClass}
 
 	dc := new(dns.Client)
-	in, _, _ := dc.Exchange(m1, dnsServer+":53")
+	in, _, err := dc.Exchange(m1, dnsServer+":53")
+	if err != nil {
+		c.String(201, err)
+	} else {
+		c.String(200, in.String())
 
-	c.String(200, in.String())
+	}
 }
 
 func StrToUint16(s string) uint16 {
