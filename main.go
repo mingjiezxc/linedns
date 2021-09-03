@@ -2,23 +2,26 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"io/ioutil"
 	"log"
+	"net"
 	"os"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/coreos/etcd/clientv3"
 	"github.com/domainr/dnsr"
-	"github.com/gin-gonic/gin"
 	"github.com/miekg/dns"
+	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v2"
 )
 
 var (
 	cli       *clientv3.Client
 	appConfig YamlConfig
+	noteRe, _ = regexp.Compile("^;")
 )
 
 type YamlConfig struct {
@@ -34,11 +37,7 @@ type YamlConfig struct {
 func main() {
 	go CliRegedit()
 	defer cli.Close()
-
-	r := gin.Default()
-	r.GET("/query/:domain/:type/:class/:dns", DnsQuery)
-
-	r.Run("0.0.0.0:" + appConfig.ListeningPort) // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
+	QueryListeningServerStart()
 }
 
 func init() {
@@ -72,7 +71,7 @@ func CliRegedit() {
 			continue
 		}
 
-		key := "/line/dns/" + appConfig.ZoneName + "/" + appConfig.LineName + "/" + appConfig.ListeningAddr + appConfig.ListeningPort
+		key := "/line/dns/" + appConfig.ZoneName + "/" + appConfig.LineName + "/" + appConfig.ListeningAddr + ":" + appConfig.ListeningPort
 
 		_, err = cli.Put(context.TODO(), key, "online", clientv3.WithLease(resp.ID))
 		if ErrCheck(err) {
@@ -90,34 +89,97 @@ func CliRegedit() {
 
 }
 
-func DnsQuery(c *gin.Context) {
-	dnsType := StrToUint16(c.Param("type"))
-	dnsClass := StrToUint16(c.Param("class"))
-	domain := c.Param("domain")
-	dnsServer := c.Param("dns")
+func QueryListeningServerStart() {
+	p := make([]byte, 2000)
 
-	if dnsServer == "0.0.0.0" {
-		var dataStr string
-		r := dnsr.New(10000)
-		for _, rr := range r.Resolve(domain, dns.Type(dnsType).String()) {
-			dataStr = dataStr + fmt.Sprintln(rr.String())
+	port, err := strconv.Atoi(appConfig.ListeningPort)
+	if ErrCheck(err) {
+		os.Exit(5)
+	}
+
+	addr := net.UDPAddr{
+		Port: port,
+		IP:   net.ParseIP("0.0.0.0"),
+	}
+	ser, err := net.ListenUDP("udp", &addr)
+	if ErrCheck(err) {
+		os.Exit(5)
+	}
+
+	for {
+		cnt, addr, err := ser.ReadFromUDP(p)
+		if err != nil {
+			continue
 		}
-		c.String(200, dataStr)
+
+		go DnsQueryQuestion(addr.IP.String(), p[0:cnt])
+	}
+}
+
+func DnsQueryQuestion(addr string, data []byte) {
+	// unMarshal data
+	query := &DnsQuery{}
+	err := proto.Unmarshal(data, query)
+	if err != nil {
 		return
 	}
 
+	if query.Tdns == "0.0.0.0" {
+		IterativeQuery(query)
+	} else {
+		err = RecursiveQuery(query)
+		if err != nil {
+			return
+		}
+	}
+
+	c, err := net.Dial("udp4", addr+":"+query.Tport)
+	if err != nil {
+		return
+	}
+	pData, err := proto.Marshal(query)
+	if err != nil {
+		return
+	}
+	c.Write(pData)
+
+}
+
+func RecursiveQuery(query *DnsQuery) error {
 	m1 := new(dns.Msg)
 	m1.Id = dns.Id()
 	m1.RecursionDesired = true
 	m1.Question = make([]dns.Question, 1)
-	m1.Question[0] = dns.Question{domain, dnsType, dnsClass}
+	m1.Question[0] = dns.Question{
+		Name:   query.Domain,
+		Qtype:  uint16(query.Dnstype),
+		Qclass: uint16(query.Dnsclass),
+	}
 
 	dc := new(dns.Client)
-	in, _, err := dc.Exchange(m1, dnsServer+":53")
+	in, _, err := dc.Exchange(m1, query.Tdns+":53")
 	if err != nil {
-		c.String(201, err.Error())
-	} else {
-		c.String(200, in.String())
+		return err
+	}
+
+	lineStr := strings.Split(in.String(), "\n")
+
+	for _, s := range lineStr {
+
+		if noteRe.MatchString(s) && s == "" {
+			continue
+		}
+		query.Rr = append(query.Rr, s)
+
+	}
+	return nil
+
+}
+
+func IterativeQuery(query *DnsQuery) {
+	r := dnsr.New(5000)
+	for _, rr := range r.Resolve(query.Domain, dns.Type(query.Dnstype).String()) {
+		query.Rr = append(query.Rr, rr.String())
 	}
 }
 
